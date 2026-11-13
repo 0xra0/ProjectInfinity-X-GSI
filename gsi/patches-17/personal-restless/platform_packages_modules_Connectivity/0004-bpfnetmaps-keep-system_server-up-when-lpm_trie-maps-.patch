@@ -1,0 +1,47 @@
+From a892b278c800131cdc49a6b85c31fa3876d3ed5d Mon Sep 17 00:00:00 2001
+From: Langsdorff <131063968+clangsdorff@users.noreply.github.com>
+Date: Mon, 9 Nov 2026 03:13:08 +0000
+Subject: [PATCH 4/4] bpfnetmaps: keep system_server up when lpm_trie maps
+ cannot be iterated on pre-4.16 kernels
+
+---
+ service/src/com/android/server/BpfNetMaps.java | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/service/src/com/android/server/BpfNetMaps.java b/service/src/com/android/server/BpfNetMaps.java
+index 484226b..f795212 100644
+--- a/service/src/com/android/server/BpfNetMaps.java
++++ b/service/src/com/android/server/BpfNetMaps.java
+@@ -676,7 +676,8 @@ public class BpfNetMaps {
+                 try {
+                     sLocalNetAccessMap.clear();
+                 } catch (ErrnoException e) {
+-                    throw new IllegalStateException("Failed to initialize local_net_access map", e);
++                    // [GSI] LPM_TRIE get_next_key needs 4.16+, older kernels return ENOTSUPP
++                    Log.w(TAG, "Unable to clear local_net_access map: " + e);
+                 }
+             }
+ 
+@@ -697,8 +698,8 @@ public class BpfNetMaps {
+                 try {
+                     sLocalNetUidHostAllowlistMap.clear();
+                 } catch (ErrnoException e) {
+-                    throw new IllegalStateException(
+-                            "Failed to initialize local_net_uid_host_allowlist map", e);
++                    // [GSI] same LPM_TRIE get_next_key limitation as local_net_access
++                    Log.w(TAG, "Unable to clear local_net_uid_host_allowlist map: " + e);
+                 }
+             }
+ 
+@@ -977,6 +978,8 @@ public class BpfNetMaps {
+             ensureInitialized(context, deps);
+         } catch(Throwable t) {
+             android.util.Log.e("PHH", "Failed initialization BpfMaps, doing without it", t);
++            // [GSI] the chunk map may be unopened, keep PermissionMonitor on the appid path
++            sPermissionMapUidMigrationEnabled = false;
+         }
+         mNetd = netd;
+         mDeps = deps;
+-- 
+2.43.0
+

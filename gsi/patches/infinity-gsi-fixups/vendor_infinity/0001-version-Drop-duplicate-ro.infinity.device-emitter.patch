@@ -1,0 +1,53 @@
+From d41eed86f63c4ccaa774e5e41f292fa6dcb3fbe1 Mon Sep 17 00:00:00 2001
+From: Claude <claude.8@pmusic.com.ua>
+Date: Wed, 19 Aug 2026 12:45:50 +0300
+Subject: [PATCH] version: Drop duplicate ro.infinity.device emitter
+
+gen_build_prop.py already prints ro.infinity.device from PRODUCT_DEVICE
+(config["InfinityDevice"]), inherited from the LineageOS change that
+introduced ro.lineage.device. LineageOS deliberately sets it in exactly
+one place; Infinity's version.mk added a second, non-optional assignment
+sourced from INFINITY_BUILD (the lunch target minus the infinity_ prefix).
+
+The two agree on a normal device, so post_process_props.py let the
+duplicate through. They disagree whenever PRODUCT_DEVICE differs from the
+lunch suffix -- as on the GSI, where infinity_tdgsi_arm64 has
+PRODUCT_DEVICE := tdgsi_arm64_ab -- and then the build fails with
+
+  error: found duplicate sysprop assignments:
+  ro.infinity.device=tdgsi_arm64_ab
+  ro.infinity.device=tdgsi_arm64
+
+Keep the soong emitter, drop ours.
+---
+ config/version.mk | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/config/version.mk b/config/version.mk
+index 651193fd..58be5560 100644
+--- a/config/version.mk
++++ b/config/version.mk
+@@ -33,6 +33,13 @@ ifeq ($(WITH_GAPPS), true)
+ ZIP_NAME := Project_Infinity-X-$(INFINITYVERSION)-$(INFINITY_BUILD)-$(INFINITY_BUILD_DATE)-GAPPS-$(INFINITY_BUILD_TYPE)
+ endif
+ 
++# ro.infinity.device is NOT set here. build/soong/scripts/gen_build_prop.py
++# already emits it from PRODUCT_DEVICE (config["InfinityDevice"]), the same
++# way LineageOS emits ro.lineage.device. Setting it again here produced two
++# non-optional assignments of one prop, which post_process_props.py rejects
++# outright whenever the two values disagree -- as they do for any product
++# whose PRODUCT_DEVICE differs from the lunch name minus "infinity_"
++# (e.g. infinity_tdgsi_arm64 -> PRODUCT_DEVICE tdgsi_arm64_ab).
+ # INFINITY System Version
+ PRODUCT_PRODUCT_PROPERTIES += \
+   ro.infinity.android.version=$(ANDROID_VERSION) \
+@@ -42,6 +49,5 @@ PRODUCT_PRODUCT_PROPERTIES += \
+   ro.infinity.build.date=$(INFINITY_BUILD_DATE) \
+   ro.infinity.buildtype=$(INFINITY_BUILD_TYPE) \
+   ro.infinity.fingerprint=$(INFINITY_FINGERPRINT) \
+-  ro.infinity.device=$(INFINITY_BUILD) \
+   ro.infinity.version=$(INFINITYVERSION) \
+   ro.infinity.maintainer=$(INFINITY_MAINTAINER)
+-- 
+2.53.0
+

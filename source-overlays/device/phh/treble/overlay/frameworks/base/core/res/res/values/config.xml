@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+	<string-array translatable="false" name="config_tether_usb_regexs">
+		<item>"usb\\d"</item>
+		<item>"rndis\\d"</item>
+	</string-array>
+
+	<string-array translatable="false" name="config_tether_wifi_regexs">
+		<item>"wlan0"</item>
+		<item>"softap.*"</item>
+		<item>"wifi_br0"</item>
+		<item>"wigig0"</item>
+	</string-array>
+
+	<string-array translatable="false" name="config_tether_bluetooth_regexs">
+        <item>bnep\\d</item>
+		<item>"bt-pan"</item>
+	</string-array>
+
+	<bool name="config_enableAutoPowerModes">true</bool>
+	<bool name="config_intrusiveNotificationLed">true</bool>
+	<string name="config_icon_mask" translatable="false">"M50 0C77.6 0 100 22.4 100 50C100 77.6 77.6 100 50 100C22.4 100 0 77.6 0 50C0 22.4 22.4 0 50 0Z"</string>
+	<bool name="config_useRoundIcon">true</bool>
+
+	<string name="config_wallpaperCropperPackage">com.android.wallpaperpicker</string>
+	<bool name="config_unplugTurnsOnScreen">true</bool>
+	<integer name="config_multiuserMaximumUsers">5</integer>
+	<bool name="config_enableMultiUserUI">true</bool>
+	<bool name="config_enableMultipleAdmins">true</bool>
+
+	<string name="config_dozeComponent">com.android.systemui/com.android.systemui.doze.DozeService</string>
+	<bool name="config_swipe_up_gesture_setting_available">true</bool>
+	<bool name="config_smart_battery_available">true</bool>
+
+	<!-- Round UI -->
+	<dimen name="config_dialogCornerRadius">28dp</dimen>
+	<dimen name="config_dialogCornerRadiusSmall">28.0dip</dimen>
+	<dimen name="config_buttonCornerRadius">28dp</dimen>
+	<dimen name="config_buttonCornerRadiusSmall">28.0dip</dimen>
+	<dimen name="rounded_slider_corner_radius">28dp</dimen>
+	<dimen name="rounded_slider_height">48dp</dimen>
+	<dimen name="rounded_slider_background_rounded_corner">28dp</dimen>
+	<dimen name="rounded_slider_track_corner_radius">28dp</dimen>
+
+	<!-- Maximum velocity to initiate a fling, as measured in dips per second. -->
+	<dimen name="config_viewMaxFlingVelocity">12000dp</dimen>
+	<!-- Minimum velocity to initiate a fling, as measured in dips per second. -->
+	<dimen name="config_viewMinFlingVelocity">600dp</dimen>
+
+	<!-- Whether safe headphone hearing is enforced by any regulation (e.g.
+	EN50332-3, EN50332-2) or not (country specific). -->
+	<bool name="config_safe_media_volume_enabled">false</bool>
+
+
+	<bool name="config_cellBroadcastAppLinks">true</bool>
+
+    <array name="config_availableColorModes">
+        <!-- ColorDisplayManager.COLOR_MODE_NATURAL -->
+        <item>0</item>
+		<!-- ColorDisplayManager.COLOR_MODE_BOOSTED -->
+		<item>1</item>
+		<!-- ColorDisplayManager.COLOR_MODE_SATURATED -->
+		<item>2</item>
+        <!-- ColorDisplayManager.COLOR_MODE_AUTOMATIC -->
+        <item>3</item>
+    </array>
+
+	<!-- Whether to show min/max refresh rate in display settings -->
+	<bool name="config_show_refresh_rate_controls">true</bool>
+	<bool name="config_supports_dynamic_refresh_rate_controls">true</bool>
+
+	<!-- Whether the device supports Smart Pixels -->
+	<bool name="config_supportSmartPixels">true</bool>
+
+	<bool name="config_supportAudioSourceUnprocessed">true</bool>
+
+	<integer name="config_num_physical_slots">2</integer>
+
+
+    <string-array name="config_packagesExemptFromSuspension" translatable="false">
+	    <item>me.phh.treble.app</item>
+    </string-array>
+
+    <string name="config_displayLightSensorType" translatable="false">android.sensor.light</string>
+    <string name="config_wlan_data_service_package">com.google.android.iwlan</string>
+    <string name="config_wlan_network_service_package">com.google.android.iwlan</string>
+  <string name="config_qualified_networks_service_package">com.android.telephony.qns</string>
+  <bool name="config_lidControlsSleep">true</bool>
+</resources>

@@ -1,0 +1,31 @@
+From acce46a8a4cbc5f2dd8599950710fdae1423d075 Mon Sep 17 00:00:00 2001
+From: BuildBot <build@local>
+Date: Tue, 18 Aug 2026 14:31:11 +0300
+Subject: [PATCH] Reapply "Removing vndk apex v30"
+
+This reverts commit ca890c24958fd09dfa243464858d0f2b92ea19fa.
+---
+ apex/Android.bp | 7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/apex/Android.bp b/apex/Android.bp
+index 9151ceb..b56c5d0 100644
+--- a/apex/Android.bp
++++ b/apex/Android.bp
+@@ -64,13 +64,6 @@ apex_vndk {
+     system_ext_specific: true,
+ }
+ 
+-apex_vndk {
+-    name: "com.android.vndk.v30",
+-    defaults: ["vndk-apex-defaults"],
+-    vndk_version: "30",
+-    system_ext_specific: true,
+-}
+-
+ apex_vndk {
+     name: "com.android.vndk.v29",
+     defaults: ["vndk-apex-defaults"],
+-- 
+2.53.0
+

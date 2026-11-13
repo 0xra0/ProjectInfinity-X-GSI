@@ -1,0 +1,4 @@
+type phh_spoof_prop, property_type;
+set_prop(system_app, phh_spoof_prop);
+set_prop(platform_app, phh_spoof_prop);
+get_prop(untrusted_app_all, phh_spoof_prop);

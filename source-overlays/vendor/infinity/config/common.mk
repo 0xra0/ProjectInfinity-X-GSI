@@ -1,0 +1,458 @@
+# Allow vendor/extra to override any property by setting it first
+$(call inherit-product-if-exists, vendor/extra/product.mk)
+$(call inherit-product-if-exists, vendor/extras/prebuilts.mk)
+
+# Exclude repos from bp scanning
+PRODUCT_SOURCE_ROOT_DIRS += -kernel/platform
+PRODUCT_SOURCE_ROOT_DIRS += -prebuilts/misc/protobuf_vendorcompat
+
+# Allow vendor prebuilt repos to exclude themselves from bp scanning
+-include $(sort $(wildcard vendor/*/*/exclude-bp.mk))
+
+PRODUCT_BRAND ?= Project Infinity X
+WITH_GAPPS ?= true
+
+ifeq ($(PRODUCT_GMS_CLIENTID_BASE),)
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.com.google.clientidbase=android-google
+else
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.com.google.clientidbase=$(PRODUCT_GMS_CLIENTID_BASE)
+endif
+
+ifeq ($(PRODUCT_IS_ATV),true)
+ifeq ($(PRODUCT_ATV_CLIENTID_BASE),)
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.oem.key1=ATV00100020
+else
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.oem.key1=$(PRODUCT_ATV_CLIENTID_BASE)
+endif
+endif
+
+ifeq ($(TARGET_BUILD_VARIANT),eng)
+# Disable ADB authentication
+PRODUCT_SYSTEM_EXT_PROPERTIES += ro.adb.secure=0
+else
+ifdef WITH_ADB_INSECURE
+# Forcebly disable ADB authentication
+PRODUCT_SYSTEM_EXT_PROPERTIES += ro.adb.secure=0
+else
+# Enable ADB authentication
+PRODUCT_SYSTEM_EXT_PROPERTIES += ro.adb.secure=1
+
+# Set ro.debuggable=0 for userdebug
+PRODUCT_NOT_DEBUGGABLE_IN_USERDEBUG := true
+endif
+
+# Disable extra StrictMode features on all non-engineering builds
+PRODUCT_PRODUCT_PROPERTIES += persist.sys.strictmode.disable=true
+endif
+
+# Animation override
+PERF_ANIM_OVERRIDE ?= false
+
+PRODUCT_PRODUCT_PROPERTIES += \
+    persist.sys.activity_anim_perf_override?=$(PERF_ANIM_OVERRIDE)
+
+# Backup Tool
+PRODUCT_COPY_FILES += \
+    vendor/infinity/prebuilt/common/bin/backuptool.sh:install/bin/backuptool.sh \
+    vendor/infinity/prebuilt/common/bin/backuptool.functions:install/bin/backuptool.functions
+
+PRODUCT_PACKAGES += \
+    50-lineage.sh
+
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
+    system/addon.d/50-lineage.sh
+
+# Cloned app exemption
+PRODUCT_COPY_FILES += \
+    vendor/infinity/prebuilt/common/etc/sysconfig/preinstalled-packages-platform-infinity-product.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/sysconfig/preinstalled-packages-platform-infinity-product.xml
+
+ifneq ($(strip $(AB_OTA_PARTITIONS) $(AB_OTA_POSTINSTALL_CONFIG)),)
+PRODUCT_COPY_FILES += \
+    vendor/infinity/prebuilt/common/bin/backuptool_ab.sh:$(TARGET_COPY_OUT_SYSTEM)/bin/backuptool_ab.sh \
+    vendor/infinity/prebuilt/common/bin/backuptool_ab.functions:$(TARGET_COPY_OUT_SYSTEM)/bin/backuptool_ab.functions \
+    vendor/infinity/prebuilt/common/bin/backuptool_postinstall.sh:$(TARGET_COPY_OUT_SYSTEM)/bin/backuptool_postinstall.sh
+
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
+    system/bin/backuptool_ab.sh \
+    system/bin/backuptool_ab.functions \
+    system/bin/backuptool_postinstall.sh
+
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.ota.allow_downgrade=true
+endif
+
+# Broken config
+PRODUCT_BROKEN_VERIFY_USES_LIBRARIES := true
+
+# Charger
+PRODUCT_PACKAGES += \
+    charger_res_images \
+    product_charger_res_images \
+    product_charger_res_images_vendor
+
+# Lineage-specific broadcast actions whitelist
+PRODUCT_COPY_FILES += \
+    vendor/infinity/config/permissions/lineage-sysconfig.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/sysconfig/lineage-sysconfig.xml
+
+# Lineage-specific init rc file
+PRODUCT_COPY_FILES += \
+    vendor/infinity/prebuilt/common/etc/init/init.lineage-system_ext.rc:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/init/init.lineage-system_ext.rc
+
+# Enable SIP+VoIP on all targets
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.software.sip.voip.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/android.software.sip.voip.xml
+
+# Enable wireless Xbox 360 controller support
+PRODUCT_COPY_FILES += \
+    frameworks/base/data/keyboards/Vendor_045e_Product_028e.kl:$(TARGET_COPY_OUT_PRODUCT)/usr/keylayout/Vendor_045e_Product_0719.kl
+
+# Columbus
+ifneq ($(TARGET_SUPPORTS_QUICK_TAP),false)
+PRODUCT_PACKAGES += \
+    ColumbusService
+endif
+
+# Component overrides
+PRODUCT_PACKAGES += \
+    lineage-component-overrides.xml
+
+# This is Lineage!
+PRODUCT_COPY_FILES += \
+    vendor/infinity/config/permissions/org.lineageos.android.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/org.lineageos.android.xml
+
+# Enforce privapp-permissions whitelist
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.control_privapp_permissions=log
+
+ifneq ($(TARGET_DISABLE_LINEAGE_SDK), true)
+# Lineage SDK
+include vendor/infinity/config/lineage_sdk_common.mk
+endif
+
+ART_BUILD_HOST_DEBUG := false
+ART_BUILD_TARGET_DEBUG := false
+PRODUCT_SYSTEM_SERVER_DEBUG_INFO := false
+WITH_DEXPREOPT_DEBUG_INFO := false
+
+# Do not include art debug targets
+PRODUCT_ART_TARGET_INCLUDE_DEBUG_BUILD := false
+
+# Strip the local variable table and the local variable type table to reduce
+# the size of the system image. This has no bearing on stack traces, but will
+# leave less information available via JDWP.
+PRODUCT_MINIMIZE_JAVA_DEBUG_INFO := true
+
+# Enable whole-program R8 Java optimizations for SystemUI and system_server,
+# but also allow explicit overriding for testing and development.
+SYSTEM_OPTIMIZE_JAVA ?= true
+SYSTEMUI_OPTIMIZE_JAVA ?= true
+
+# ColumbusService
+ifneq ($(TARGET_SUPPORTS_QUICK_TAP),false)
+PRODUCT_PACKAGES += \
+    ColumbusService
+endif
+
+# Disable dex2oat debug
+USE_DEX2OAT_DEBUG := false
+
+# DeviceAsWebcam
+ifeq ($(TARGET_BUILD_DEVICE_AS_WEBCAM), true)
+    PRODUCT_PACKAGES += \
+        DeviceAsWebcam
+
+    PRODUCT_VENDOR_PROPERTIES += \
+        ro.usb.uvc.enabled=true
+endif
+
+# Disable vendor restrictions
+PRODUCT_RESTRICT_VENDOR_FILES := false
+
+# BatteryStatsViewer
+PRODUCT_PACKAGES += \
+     BatteryStatsViewer
+
+# Bootanimation
+include vendor/infinity/config/bootanimation.mk
+
+# Blurs
+ PRODUCT_SYSTEM_EXT_PROPERTIES += \
+     ro.sf.blurs_are_expensive=1 \
+     ro.surface_flinger.supports_background_blur=1 \
+     ro.launcher.blur.appLaunch=0 \
+     persist.sys.sf.disable_blurs=1
+
+# Lineage interfaces
+PRODUCT_PACKAGES += \
+    framework_compatibility_matrix.lineage.xml
+
+# Lineage packages
+ifeq ($(PRODUCT_IS_ATV),)
+PRODUCT_PACKAGES += \
+    ExactCalculator
+endif
+
+ifeq ($(PRODUCT_IS_AUTOMOTIVE),)
+PRODUCT_PACKAGES += \
+    LineageParts
+endif
+
+PRODUCT_PACKAGES += \
+    LineageSettingsProvider \
+    Updater
+
+PRODUCT_COPY_FILES += \
+    vendor/infinity/prebuilt/common/etc/init/init.lineage-updater.rc:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/init/init.lineage-updater.rc
+
+# Config
+PRODUCT_PACKAGES += \
+    SimpleDeviceConfig \
+    SimpleSettingsConfig
+
+# Extra packages
+PRODUCT_PACKAGES += \
+    AxQuickLook \
+    AxSandbox \
+    AxThemeStore
+
+# Extra tools in Lineage
+PRODUCT_PACKAGES += \
+    bash \
+    curl \
+    getcap \
+    htop \
+    nano \
+    setcap \
+    vim
+
+PRODUCT_PACKAGES += \
+    nano_recovery
+
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
+    system/bin/curl \
+    system/bin/getcap \
+    system/bin/setcap \
+    system/%/libzstd.so
+
+# fastbootd
+ifneq ($(TARGET_DISABLE_FASTBOOTD),true)
+PRODUCT_PACKAGES += \
+    fastbootd
+endif
+    
+# FaceUnlock
+TARGET_FACE_UNLOCK_SUPPORTED ?= $(TARGET_SUPPORTS_64_BIT_APPS)
+TARGET_PROVIDES_FACE_UNLOCK_HAL ?= false
+
+ifeq ($(TARGET_PROVIDES_FACE_UNLOCK_HAL), false)
+ifneq ($(TARGET_FACE_UNLOCK_SUPPORTED),false)
+PRODUCT_PACKAGES += \
+    FaceUnlock
+
+PRODUCT_SYSTEM_EXT_PROPERTIES += \
+    ro.face.sense_service=true
+
+PRODUCT_COPY_FILES += \
+    frameworks/native/data/etc/android.hardware.biometrics.face.xml:$(TARGET_COPY_OUT_SYSTEM_EXT)/etc/permissions/android.hardware.biometrics.face.xml
+endif
+endif
+
+# Filesystems tools
+PRODUCT_PACKAGES += \
+    fsck.ntfs \
+    mkfs.ntfs \
+    mount.ntfs
+
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
+    system/bin/fsck.ntfs \
+    system/bin/mkfs.ntfs \
+    system/bin/mount.ntfs \
+    system/%/libfuse-lite.so \
+    system/%/libntfs-3g.so
+
+# FRP
+PRODUCT_COPY_FILES += \
+    vendor/infinity/prebuilt/common/bin/wipe-frp.sh:$(TARGET_COPY_OUT_RECOVERY)/root/system/bin/wipe-frp
+
+# Gamespace
+ PRODUCT_PACKAGES += \
+     GameSpace
+ 
+ PRODUCT_PRODUCT_PROPERTIES += \
+     debug.graphics.game_default_frame_rate.disabled=true
+
+# Gapps
+ifeq ($(WITH_GAPPS),true)
+$(call inherit-product, vendor/pixel/gms/products/gms.mk)
+$(call inherit-product, vendor/pixel/themepicker/products/themepicker.mk)
+$(call inherit-product, vendor/pixel/sounds/products/sounds.mk)
+
+ifeq ($(INFINITY_BUILD_TYPE),OFFICIAL)
+PRODUCT_PACKAGES += \
+    UpdaterGMSOverlay
+endif
+endif
+
+# Openssh
+PRODUCT_PACKAGES += \
+    scp \
+    sftp \
+    ssh \
+    sshd \
+    sshd_config \
+    ssh-keygen \
+    start-ssh
+
+PRODUCT_COPY_FILES += \
+    vendor/infinity/prebuilt/common/etc/init/init.openssh.rc:$(TARGET_COPY_OUT_PRODUCT)/etc/init/init.openssh.rc
+
+# LMO
+PRODUCT_PACKAGES += \
+    LMOFreeform \
+    LMOFreeformSidebar
+
+# Omni
+PRODUCT_PACKAGES += \
+    OmniJaws \
+    OmniStyle
+
+# Overlays
+include packages/overlays/Themes/themes.mk
+
+# Props
+PRODUCT_PRODUCT_PROPERTIES += \
+    dalvik.vm.debug.alloc=0 \
+    ro.error.receiver.system.apps=com.google.android.gms \
+    ro.atrace.core.services=com.google.android.gms,com.google.android.gms.ui,com.google.android.gms.persistent \
+    ro.com.google.ime.theme_id=5 \
+    ro.opa.eligible_device=true \
+    ro.com.android.wifi-watchlist=GoogleGuest \
+    drm.service.enabled=true \
+    persist.sys.dun.override=0 \
+    persist.sys.disable_rescue=true
+
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.input.video_enabled=false
+
+PRODUCT_SYSTEM_EXT_PROPERTIES += \
+    persist.arm64.memtag.app.com.android.se=off \
+    persist.arm64.memtag.app.com.google.android.bluetooth=off \
+    persist.arm64.memtag.app.com.android.nfc=off \
+    persist.arm64.memtag.process.system_server=off \
+    dalvik.vm.dex2oat64.enabled=true
+
+# Disable RescueParty due to high risk of data loss
+PRODUCT_PRODUCT_PROPERTIES += \
+    persist.sys.disable_rescue=true
+
+# OverlayFS
+PRODUCT_PACKAGES_DEBUG += \
+    disable-overlays
+
+# rsync
+PRODUCT_PACKAGES += \
+    rsync
+
+# rkpd
+PRODUCT_PRODUCT_PROPERTIES += \
+    remote_provisioning.enable_rkpd=true \
+    remote_provisioning.hostname=remoteprovisioning.googleapis.com
+
+# Storage manager
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.storage_manager.enabled=true
+
+# Default wifi country code
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.boot.wificountrycode?=00
+
+# These packages are excluded from user builds
+PRODUCT_PACKAGES_DEBUG += \
+    procmem
+
+ifneq ($(TARGET_BUILD_VARIANT),user)
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
+    system/bin/procmem
+endif
+
+# Root
+ifeq ($(WITH_SU),true)
+ifneq ($(TARGET_BUILD_VARIANT),user)
+PRODUCT_PACKAGES += \
+    adb_root
+
+PRODUCT_PACKAGES += \
+    su
+
+PRODUCT_ARTIFACT_PATH_REQUIREMENT_ALLOWED_LIST += \
+    system/xbin/su
+endif
+endif
+
+# Disable touch video heatmap to reduce latency, motion jitter, and CPU usage
+# on supported devices with Deep Press input classifier HALs and models
+PRODUCT_PRODUCT_PROPERTIES += \
+    ro.input.video_enabled=false
+
+# SystemUI
+PRODUCT_DEXPREOPT_SPEED_APPS += \
+    AppLocker \
+    GameSpace \
+    Settings \
+    CarSystemUI \
+    SystemUI
+
+PRODUCT_PRODUCT_PROPERTIES += \
+    dalvik.vm.systemuicompilerfilter=speed
+
+ifneq ($(TARGET_BUILD_VARIANT),eng)
+PRODUCT_PRODUCT_PROPERTIES += \
+    debug.sf.enable_transaction_tracing=false
+endif
+
+# Audio files
+$(call inherit-product, vendor/infinity/audio/audio.mk)
+
+PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/infinity/overlay/no-rro
+PRODUCT_PACKAGE_OVERLAYS += \
+    vendor/infinity/overlay/common \
+    vendor/infinity/overlay/no-rro
+
+PRODUCT_PACKAGES += \
+    DocumentsUIOverlay \
+    LineageFrameworksOverlay \
+    NetworkStackOverlay \
+    NfcOverlay \
+    PermissionControllerOverlay \
+    SBHeightOverlay
+
+# Translations
+CUSTOM_LOCALES += \
+    ast_ES \
+    ckb_IQ \
+    ckb_IR \
+    gd_GB \
+    cy_GB \
+    fur_IT \
+    nn_NO
+
+PRODUCT_ENFORCE_RRO_EXCLUDED_OVERLAYS += vendor/crowdin/overlay
+PRODUCT_PACKAGE_OVERLAYS += vendor/crowdin/overlay
+
+PRODUCT_EXTRA_RECOVERY_KEYS += \
+    vendor/infinity/build/target/product/security/lineage
+
+include vendor/infinity/config/version.mk
+
+# Signing Keys
+ ifeq ($(INFINITY_BUILD_TYPE),OFFICIAL)
+ include vendor/infinity-priv/keys/keys.mk
+ else
+ -include vendor/infinity-priv/keys/keys.mk
+ endif
+
+-include $(WORKSPACE)/build_env/image-auto-bits.mk

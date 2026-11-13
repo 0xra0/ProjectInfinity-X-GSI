@@ -1,0 +1,19 @@
+{
+  "ro.build.id": "CP2A.260605.016",
+  "ro.build.version.sdk": "37",
+  "ro.build.version.release": "17",
+  "ro.build.version.security_patch": "2026-11-01",
+  "ro.build.date.utc": "1794566949",
+  "ro.build.type": "user",
+  "ro.infinity.device": "tdgsi_arm64_ab",
+  "ro.adb.secure": "1",
+  "ro.debuggable": "0",
+  "ro.infinity.android.version": "17",
+  "ro.infinity.build.version": "Project_Infinity-X-4.2-tdgsi_arm64_gapps-13.11.2026",
+  "ro.infinity.build.status": "UNOFFICIAL",
+  "ro.infinity.build.date": "13.11.2026",
+  "ro.infinity.buildtype": "UNOFFICIAL",
+  "ro.infinity.fingerprint": "Project_Infinity//tdgsi_arm64_gapps/13.11.2026",
+  "ro.infinity.version": "4.2",
+  "ro.infinity.maintainer": "UNKNOWN"
+}

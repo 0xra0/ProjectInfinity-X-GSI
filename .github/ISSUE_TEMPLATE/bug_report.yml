@@ -1,0 +1,28 @@
+name: Device / installation report
+description: Report a reproducible issue with an unofficial GSI release.
+body:
+  - type: input
+    id: release
+    attributes:
+      label: Release tag and variant
+      placeholder: v4.2-android17-20261113, vanilla or gapps
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device model, codename, and stock firmware version
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Installation steps and reproduction
+      description: Include fastbootd/AVB procedure, data-format status, expected behavior, and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs and hardware observations
+      description: Remove account details, IMEI, phone numbers, serial numbers, and other personal data before attaching logs.

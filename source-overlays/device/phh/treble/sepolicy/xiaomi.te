@@ -1,0 +1,18 @@
+type vendor_sysfs_displayfeature, domain, mlstrustedobject;
+allow platform_app vendor_sysfs_displayfeature:dir search;
+
+allow platform_app vendor_sysfs_displayfeature:file write;
+allow platform_app vendor_sysfs_displayfeature:file open;
+allow platform_app vendor_sysfs_displayfeature:file getattr;
+
+type sysfs_tp_fodstatus, property_type;
+allow shell sysfs_tp_fodstatus:file getattr;
+
+allow shell vendor_sysfs_displayfeature:dir search;
+
+
+# xiaomi touch init sets the panel vendor property during boot; the stricter
+# gsi policy denies it and the touch driver then runs without its panel config
+type vendor_touch_init_shell, domain;
+type vendor_fp_prop, property_type;
+allow vendor_touch_init_shell vendor_fp_prop:property_service set;

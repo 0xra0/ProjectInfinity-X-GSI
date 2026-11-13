@@ -1,0 +1,626 @@
+From 59c16f2ce4ae464d146d27600ebedf27dca5caff Mon Sep 17 00:00:00 2001
+From: "Christopher A. Williamson" <contact@chrisaw.io>
+Date: Mon, 9 Nov 2026 03:02:36 +0000
+Subject: [PATCH] connectivity: tolerate BPF-less legacy kernels
+
+---
+ bpf/headers/include/bpf/BpfUtils.h            |   5 +-
+ bpf/loader/NetBpfLoad.cpp                     | 104 +++++++++------
+ bpf/netd/BpfHandler.cpp                       | 124 +++++++++++-------
+ ...id_server_connectivity_ClatCoordinator.cpp |  13 +-
+ .../src/com/android/server/BpfNetMaps.java    |  19 +++
+ 5 files changed, 164 insertions(+), 101 deletions(-)
+
+diff --git a/bpf/headers/include/bpf/BpfUtils.h b/bpf/headers/include/bpf/BpfUtils.h
+index 5ca52c6..86fe01e 100644
+--- a/bpf/headers/include/bpf/BpfUtils.h
++++ b/bpf/headers/include/bpf/BpfUtils.h
+@@ -152,7 +152,10 @@ const bool isAtLeastS    = (api_level_full >= 3100);  // 31
+ const bool isAtLeastT    = (api_level_full >= 3300);  // 33
+ const bool isAtLeastU    = (api_level_full >= 3400);  // 34
+ const bool isAtLeastV    = (api_level_full >= 3500);  // 35
+-const bool isAtLeast25Q2 = (api_level_full >= 3600);  // 36.0
++// GSI: 25Q2 BPF features need a 5.4+ kernel, and api_level_full says nothing about
++// the kernel actually running, so gate on the kernel too. isAtLeastKernelVersion()
++// cannot be used here: it short-circuits to true against minSupportedKernelVer.
++const bool isAtLeast25Q2 = (api_level_full >= 3600) && (kernelVersion() >= KVER(5, 4, 0));
+ const bool isAtLeast25Q4 = (api_level_full >= 3610);  // 36.1
+ const bool isAtLeast26Q2 = (api_level_full >= 3700);  // 37.0
+ const bool isAtLeast26Q3 = (api_level_full >= 3702);  // 37.0+
+diff --git a/bpf/loader/NetBpfLoad.cpp b/bpf/loader/NetBpfLoad.cpp
+index deb729c..ca8342d 100644
+--- a/bpf/loader/NetBpfLoad.cpp
++++ b/bpf/loader/NetBpfLoad.cpp
+@@ -698,19 +698,20 @@ static int pinMap(const borrowed_fd& fd, const struct bpf_map_def& mapDef) {
+                 return -err;
+             }
+         }
++        // [GSI] a pinned map works even when the ownership bits could not be set
++        // (older kernels and some /sys/fs/bpf mounts), so don't abort the whole
++        // object load over it.
+         ret = chmod(mapDef.pin_location, mapDef.mode);
+         if (ret) {
+             const int err = errno;
+-            ALOGE("chmod(%s, 0%o) = %d [%d:%s]", mapDef.pin_location, mapDef.mode, ret, err,
++            ALOGW("chmod(%s, 0%o) = %d [%d:%s]", mapDef.pin_location, mapDef.mode, ret, err,
+                   strerror(err));
+-            return -err;
+         }
+         ret = chown(mapDef.pin_location, (uid_t)mapDef.uid, (gid_t)mapDef.gid);
+         if (ret) {
+             const int err = errno;
+-            ALOGE("chown(%s, %u, %u) = %d [%d:%s]", mapDef.pin_location, mapDef.uid, mapDef.gid,
++            ALOGW("chown(%s, %u, %u) = %d [%d:%s]", mapDef.pin_location, mapDef.uid, mapDef.gid,
+                   ret, err, strerror(err));
+-            return -err;
+         }
+ 
+         if (!strcmp(mapDef.pin_location, "/sys/fs/bpf/tethering/map_test_kernel_stats_map")) {
+@@ -961,17 +962,16 @@ static int pinProg(const borrowed_fd& fd, const struct bpf_prog_def& progDef) {
+             return -err;
+         }
+     }
++    // [GSI] same as pinMap: the pinned program is usable without the ownership bits
+     if (chmod(progDef.pin_location, 0440)) {
+         const int err = errno;
+-        ALOGE("chmod %s 0440 -> [%d:%s]", progDef.pin_location, err, strerror(err));
+-        return -err;
++        ALOGW("chmod %s 0440 -> [%d:%s]", progDef.pin_location, err, strerror(err));
+     }
+     if (chown(progDef.pin_location, (uid_t)progDef.uid,
+               (gid_t)progDef.gid)) {
+         const int err = errno;
+-        ALOGE("chown %s %u %u -> [%d:%s]", progDef.pin_location, progDef.uid,
++        ALOGW("chown %s %u %u -> [%d:%s]", progDef.pin_location, progDef.uid,
+               progDef.gid, err, strerror(err));
+-        return -err;
+     }
+     return 0;
+ }
+@@ -1103,7 +1103,14 @@ static int loadCodeSections(const ElfObject& elfObj, vector<codeSection>& cs,
+                           cs[i].prog_def->name());
+                     continue;
+                 }
+-                ALOGE("non-optional program %s failed to load.", cs[i].prog_def->name());
++                // [GSI] treat non-optional failures as non-fatal: kernels
++                // that spoof their version may pass the kver gate but lack
++                // the BPF features needed by the program (e.g. 4.19 spoofing
++                // 5.4 fails TC classifier programs).  warn and continue so
++                // tethering can fall back to iptables.
++                ALOGW("[GSI] non-optional program %s failed to load -- continuing anyway",
++                      cs[i].prog_def->name());
++                continue;
+             }
+         }
+ 
+@@ -1512,6 +1519,19 @@ static int libbpfPrint(enum libbpf_print_level lvl, const char *const formatStr,
+ static int doLoad(char** argv, char * const envp[]) {
+     libbpf_set_print(libbpfPrint);
+ 
++    // [GSI] Fail-safe for the loader hand-off chain: the property is set by the
++    // final 'done' re-exec, and any stage dying before that leaves init's
++    // wait_for_prop hung forever. A forked one-shot watchdog force-releases the
++    // wait; this is a no-op if the chain completed within the window.
++    pid_t watchdog = fork();
++    if (watchdog == 0) {
++        sleep(45);
++        if (!GetIntProperty("bpf.progs_loaded", 0)) {
++            SetProperty("bpf.progs_loaded", "1");
++        }
++        _exit(0);
++    }
++
+     bool failed = false;
+ 
+     const bool runningAsRoot = !getuid();  // true iff U QPR3 or V+
+@@ -1548,31 +1568,31 @@ static int doLoad(char** argv, char * const envp[]) {
+         return 2;
+     }
+ 
++    // [GSI] Kernel version and architecture checks are relaxed to warnings
++    // for Treble GSI compatibility with older vendor kernels (4.4 through 5.10+).
++    // BPF loading will proceed with graceful degradation on unsupported kernels.
++
+     // both S and T require kernel 4.9 (and eBpf support)
+     // (this also guarantees 'kernelVer' isn't an invalid uninitialized 0)
+     if (!isAtLeastKernelVersion(4, 9)) {
+-        ALOGE("Android S & T require kernel 4.9.");
+-        failed = true;
++        ALOGW("Android S & T require kernel 4.9.");
+     }
+ 
+     // U bumps the kernel requirement up to 4.14
+     if (isAtLeastU && !isAtLeastKernelVersion(4, 14)) {
+-        ALOGE("Android U requires kernel 4.14.");
+-        failed = true;
++        ALOGW("Android U requires kernel 4.14.");
+     }
+ 
+     // V bumps the kernel requirement up to 4.19
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel419
+     if (isAtLeastV && !isAtLeastKernelVersion(4, 19)) {
+-        ALOGE("Android V requires kernel 4.19.");
+-        failed = true;
++        ALOGW("Android V requires kernel 4.19.");
+     }
+ 
+     // 25Q2 bumps the kernel requirement up to 5.4
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel54
+     if (isAtLeast25Q2 && !isAtLeastKernelVersion(5, 4)) {
+-        ALOGE("Android 25Q2 requires kernel 5.4.");
+-        failed = true;
++        ALOGW("Android 25Q2 requires kernel 5.4.");
+     }
+ 
+     // 25Q4 bumps the kernel requirement up to 5.10
+@@ -1583,32 +1603,27 @@ static int doLoad(char** argv, char * const envp[]) {
+ 
+     // 26Q4 bumps the kernel requirement up to 5.15
+     if (isAtLeast26Q4 && !isAtLeastKernelVersion(5, 15)) {
+-        ALOGE("Android 26Q4 requires kernel 5.15.");
+-        failed = true;
++        ALOGW("Android 26Q4 requires kernel 5.15.");
+     }
+ 
+     // Technically already required by U, but only enforce on V+
+     // see also: //system/netd/tests/kernel_test.cpp TestKernel64Bit
+     if (isAtLeastV && isKernel32Bit() && isAtLeastKernelVersion(5, 16)) {
+-        ALOGE("Android V+ platform with 32 bit kernel version >= 5.16.0 is unsupported");
+-        if (!isTV()) return 8;
++        ALOGW("Android V+ platform with 32 bit kernel version >= 5.16.0 is unsupported");
+     }
+ 
+     if (isKernel32Bit() && isAtLeast25Q2) {
+-        ALOGE("Android 25Q2 requires 64 bit kernel.");
+-        failed = true;
++        ALOGW("Android 25Q2 requires 64 bit kernel.");
+     }
+ 
+     // 6.6 is highest version supported by Android V, so this is effectively W+ (sdk=36+)
+     if (isKernel32Bit() && isAtLeastKernelVersion(6, 7)) {
+-        ALOGE("Android platform with 32 bit kernel version >= 6.7.0 is unsupported");
+-        failed = true;
++        ALOGW("Android platform with 32 bit kernel version >= 6.7.0 is unsupported");
+     }
+ 
+     // Various known ABI layout issues, particularly wrt. bpf and ipsec/xfrm.
+     if (isAtLeastV && isKernel32Bit() && isX86()) {
+-        ALOGE("Android V requires X86 kernel to be 64-bit.");
+-        failed = true;
++        ALOGW("Android V requires X86 kernel to be 64-bit.");
+     }
+ 
+     if (isAtLeastV) {
+@@ -1723,7 +1738,7 @@ static int doLoad(char** argv, char * const envp[]) {
+         // (this writeFile is known to fail on at least 4.19, but always defaults to 0 on
+         // pre-5.13, on 5.13+ it depends on CONFIG_BPF_UNPRIV_DEFAULT_OFF)
+         if (!writeFile("/proc/sys/kernel/unprivileged_bpf_disabled", "0\n")) {
+-            failed = true;
++            ALOGW("[GSI] Failed to write unprivileged_bpf_disabled, may not exist on older kernels");
+         }
+     }
+ 
+@@ -1739,14 +1754,16 @@ static int doLoad(char** argv, char * const envp[]) {
+         //  kernel does not have CONFIG_BPF_JIT=y)
+         // BPF_JIT is required by R VINTF (which means 4.14/4.19/5.4 kernels),
+         // but 4.14/4.19 were released with P & Q, and only 5.4 is new in R+.
+-        if (!writeFile("/proc/sys/net/core/bpf_jit_enable", "1\n") &&
+-            android::bpf::isAtLeastKernelVersion(4, 14, 0)) failed = true;
++        if (!writeFile("/proc/sys/net/core/bpf_jit_enable", "1\n")) {
++            ALOGW("[GSI] Failed to write bpf_jit_enable, kernel may lack CONFIG_BPF_JIT");
++        }
+ 
+         // Enable JIT kallsyms export for privileged users only
+         // (Note: this (open) will fail with ENOENT 'No such file or directory' if
+         //  kernel does not have CONFIG_HAVE_EBPF_JIT=y)
+-        if (!writeFile("/proc/sys/net/core/bpf_jit_kallsyms", "1\n") &&
+-            android::bpf::isAtLeastKernelVersion(4, 14, 0)) failed = true;
++        if (!writeFile("/proc/sys/net/core/bpf_jit_kallsyms", "1\n")) {
++            ALOGW("[GSI] Failed to write bpf_jit_kallsyms, kernel may lack CONFIG_HAVE_EBPF_JIT");
++        }
+     }
+ 
+     // Create all the pin subdirectories
+@@ -1772,13 +1789,13 @@ static int doLoad(char** argv, char * const envp[]) {
+         uint32_t progId = bpfGetNextProgId(0);  // expect 0 with errno == ENOENT
+         if (progId || errno != ENOENT) {
+             ALOGE("bpfGetNextProgId(zero) returned %u (errno %d)", progId, errno);
+-            return 32;
++            failed = true;
+         }
+         errno = 0;
+         uint32_t mapId = bpfGetNextMapId(0);  // expect 0 with errno == ENOENT
+         if (mapId || errno != ENOENT) {
+             ALOGE("bpfGetNextMapId(zero) returned %u (errno %d)", mapId, errno);
+-            return 33;
++            failed = true;
+         }
+     } else if (isAtLeastKernelVersion(4, 14)) {  // implies S through U QPR2
+         // bpfGetNext{Prog,Map}Id require 4.14+
+@@ -1791,7 +1808,7 @@ static int doLoad(char** argv, char * const envp[]) {
+             if (!next && errno == ENOENT) break;
+             if (next <= mapId) {
+                 ALOGE("bpfGetNextMapId(%u) returned %u errno %d", mapId, next, errno);
+-                return 34;
++                failed = true;
+             }
+             mapId = next;
+         }
+@@ -1804,12 +1821,19 @@ static int doLoad(char** argv, char * const envp[]) {
+             // which causes bpfGetNextMapId to behave as bpfGetNextProgId,
+             // and thus it should return 0 with errno == ENOENT.
+             ALOGE("bpfGetNextMapId(final %u) returned %u errno %d", mapId, next, errno);
+-            if (next || errno != ENOENT) return 35;
+-            if (isAtLeastT || isAtLeastKernelVersion(4, 20)) return 36;
++            // [GSI] non-fatal: old vendor kernels may not satisfy this
++            if (next || errno != ENOENT) {
++                ALOGW("[GSI] bpfGetNextMapId(final) unexpected: next=%u errno=%d", next, errno);
++            }
++            if (isAtLeastT || isAtLeastKernelVersion(4, 20)) {
++                ALOGW("[GSI] kernel should not have BPF UAPI bug on T+ or 4.20+");
++            }
+             // implies Android S with 4.14 or 4.19 kernel
+             ALOGW("Detected kernel with invalid BPF UAPI - disabling mainline use of eBPF.");
+             // leave a flag that we're 'done'
+-            if (!createDir("/sys/fs/bpf/netd_shared/mainline_done")) return 37;
++            if (!createDir("/sys/fs/bpf/netd_shared/mainline_done")) {
++                ALOGW("[GSI] failed to create mainline_done dir");
++            }
+             return 0;
+         }
+     } else {  // implies S/T with 4.9 kernel
+@@ -1830,7 +1854,7 @@ static int doLoad(char** argv, char * const envp[]) {
+         if (writeToMapEntry(bpfKernelStatsMapFd, &key, &timeTaken, BPF_ANY)) {
+             ALOGE("Failed to write object load time to kernel stats map, err: [%d, %s]",
+                   errno, strerror(errno));
+-            return 39;
++            if (isAtLeastT) failed = true;
+         }
+ 
+         uint32_t value = 123;
+@@ -1838,7 +1862,7 @@ static int doLoad(char** argv, char * const envp[]) {
+         if (writeToMapEntry(bpfKernelStatsMapFd, &key, &value, BPF_ANY)) {
+             ALOGE("Critical kernel bug - failure to write into index 1 of 2 element bpf map array."
+                   "[%d, %s]", errno, strerror(errno));
+-            if (isAtLeastT) return 40;
++            if (isAtLeastT) failed = true;
+         }
+     }
+ 
+diff --git a/bpf/netd/BpfHandler.cpp b/bpf/netd/BpfHandler.cpp
+index f7f65e6..85e4c97 100644
+--- a/bpf/netd/BpfHandler.cpp
++++ b/bpf/netd/BpfHandler.cpp
+@@ -84,6 +84,16 @@ static Result<void> checkProgramAccessible(const char* programPath) {
+     return {};
+ }
+ 
++// gsix: on legacy kernels bpf programs may be missing or unloadable; netd must
++// survive degraded rather than abort and take zygote down with it via the
++// netd.rc onrestart hook
++static void warnIfFailed(const char* op, android::base::Result<void> res) {
++    if (!res.ok()) {
++        ALOGW("[GSI] %s failed on this kernel, continuing degraded: %s", op,
++              res.error().message().c_str());
++    }
++}
++
+ static void getsockoptTest() {
+     // getsockopt bpf hook is not called if the device is running in compat mode.
+     if (isKernel64Bit() != isUserspace64bit() && !isAtLeastKernelVersion(6, 13)) return;
+@@ -122,10 +132,10 @@ static Result<void> initPrograms(const char* cg2_path) {
+     unique_fd cg_fd(open(cg2_path, O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+     if (!cg_fd.ok()) return Error(errno) << "Opening cgroup dir failed";
+ 
+-    RETURN_IF_NOT_OK(checkProgramAccessible(XT_BPF_ALLOWLIST_PROG_PATH));
+-    RETURN_IF_NOT_OK(checkProgramAccessible(XT_BPF_DENYLIST_PROG_PATH));
+-    RETURN_IF_NOT_OK(checkProgramAccessible(XT_BPF_EGRESS_PROG_PATH));
+-    RETURN_IF_NOT_OK(checkProgramAccessible(XT_BPF_INGRESS_PROG_PATH));
++    warnIfFailed("XT_BPF_ALLOWLIST_PROG_PATH", checkProgramAccessible(XT_BPF_ALLOWLIST_PROG_PATH));
++    warnIfFailed("XT_BPF_DENYLIST_PROG_PATH", checkProgramAccessible(XT_BPF_DENYLIST_PROG_PATH));
++    warnIfFailed("XT_BPF_EGRESS_PROG_PATH", checkProgramAccessible(XT_BPF_EGRESS_PROG_PATH));
++    warnIfFailed("XT_BPF_INGRESS_PROG_PATH", checkProgramAccessible(XT_BPF_INGRESS_PROG_PATH));
+     auto ret = attachProgramToCgroup(BPF_EGRESS_PROG_PATH, cg_fd, BPF_CGROUP_INET_EGRESS);
+     if (!ret.ok()) {
+         ALOGE("Failed loading egress program");
+@@ -141,83 +151,84 @@ static Result<void> initPrograms(const char* cg2_path) {
+     // TODO: delete the if statement once all devices should support cgroup
+     // socket filter (ie. the minimum kernel version required is 4.14).
+     if (isAtLeastKernelVersion(4, 14)) {
+-        RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_INET_CREATE_PROG_PATH,
+-                                    cg_fd, BPF_CGROUP_INET_SOCK_CREATE));
++        warnIfFailed("CGROUP_INET_CREATE_PROG_PATH", attachProgramToCgroup(CGROUP_INET_CREATE_PROG_PATH, cg_fd, BPF_CGROUP_INET_SOCK_CREATE));
+     }
+ 
+     if (isAtLeastKernelVersion(5, 10)) {
+-        RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_INET_RELEASE_PROG_PATH,
+-                                    cg_fd, BPF_CGROUP_INET_SOCK_RELEASE));
++        warnIfFailed("CGROUP_INET_RELEASE_PROG_PATH", attachProgramToCgroup(CGROUP_INET_RELEASE_PROG_PATH, cg_fd, BPF_CGROUP_INET_SOCK_RELEASE));
+     }
+ 
+     if (isAtLeastV) {
+         // V requires 4.19+, so technically this 2nd 'if' is not required, but it
+         // doesn't hurt us to try to support AOSP forks that try to support older kernels.
+         if (isAtLeastKernelVersion(4, 19)) {
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_CONNECT4_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_INET4_CONNECT));
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_CONNECT6_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_INET6_CONNECT));
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_UDP4_RECVMSG_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_UDP4_RECVMSG));
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_UDP6_RECVMSG_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_UDP6_RECVMSG));
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_UDP4_SENDMSG_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_UDP4_SENDMSG));
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_UDP6_SENDMSG_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_UDP6_SENDMSG));
++            warnIfFailed("CGROUP_CONNECT4_PROG_PATH", attachProgramToCgroup(CGROUP_CONNECT4_PROG_PATH, cg_fd, BPF_CGROUP_INET4_CONNECT));
++            warnIfFailed("CGROUP_CONNECT6_PROG_PATH", attachProgramToCgroup(CGROUP_CONNECT6_PROG_PATH, cg_fd, BPF_CGROUP_INET6_CONNECT));
++            warnIfFailed("CGROUP_UDP4_RECVMSG_PROG_PATH", attachProgramToCgroup(CGROUP_UDP4_RECVMSG_PROG_PATH, cg_fd, BPF_CGROUP_UDP4_RECVMSG));
++            warnIfFailed("CGROUP_UDP6_RECVMSG_PROG_PATH", attachProgramToCgroup(CGROUP_UDP6_RECVMSG_PROG_PATH, cg_fd, BPF_CGROUP_UDP6_RECVMSG));
++            warnIfFailed("CGROUP_UDP4_SENDMSG_PROG_PATH", attachProgramToCgroup(CGROUP_UDP4_SENDMSG_PROG_PATH, cg_fd, BPF_CGROUP_UDP4_SENDMSG));
++            warnIfFailed("CGROUP_UDP6_SENDMSG_PROG_PATH", attachProgramToCgroup(CGROUP_UDP6_SENDMSG_PROG_PATH, cg_fd, BPF_CGROUP_UDP6_SENDMSG));
+         }
+ 
+         if (isAtLeastKernelVersion(5, 4)) {
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_GETSOCKOPT_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_GETSOCKOPT));
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_SETSOCKOPT_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_SETSOCKOPT));
++            warnIfFailed("CGROUP_GETSOCKOPT_PROG_PATH", attachProgramToCgroup(CGROUP_GETSOCKOPT_PROG_PATH, cg_fd, BPF_CGROUP_GETSOCKOPT));
++            warnIfFailed("CGROUP_SETSOCKOPT_PROG_PATH", attachProgramToCgroup(CGROUP_SETSOCKOPT_PROG_PATH, cg_fd, BPF_CGROUP_SETSOCKOPT));
+             getsockoptTest();
+         }
+     }
+ 
+     if (isAtLeast26Q2) {
+         if (isAtLeastKernelVersion(6, 1) && !isAtLeastKernelVersion(6, 18)) {
+-            RETURN_IF_NOT_OK(attachProgramToCgroup(L4S_OPTIONS_SOCKOPS_PROG_PATH,
+-                                        cg_fd, BPF_CGROUP_SOCK_OPS));
++            warnIfFailed("L4S_OPTIONS_SOCKOPS_PROG_PATH", attachProgramToCgroup(L4S_OPTIONS_SOCKOPS_PROG_PATH, cg_fd, BPF_CGROUP_SOCK_OPS));
+         }
+     }
+ 
+     if (isAtLeastKernelVersion(4, 19)) {
+-        RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_BIND4_PROG_PATH,
+-                cg_fd, BPF_CGROUP_INET4_BIND));
+-        RETURN_IF_NOT_OK(attachProgramToCgroup(CGROUP_BIND6_PROG_PATH,
+-                cg_fd, BPF_CGROUP_INET6_BIND));
++        warnIfFailed("CGROUP_BIND4_PROG_PATH", attachProgramToCgroup(CGROUP_BIND4_PROG_PATH, cg_fd, BPF_CGROUP_INET4_BIND));
++        warnIfFailed("CGROUP_BIND6_PROG_PATH", attachProgramToCgroup(CGROUP_BIND6_PROG_PATH, cg_fd, BPF_CGROUP_INET6_BIND));
+ 
+         // This should trivially pass, since we just attached up above,
+         // but BPF_PROG_QUERY is only implemented on 4.19+ kernels.
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_EGRESS) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_INGRESS) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_SOCK_CREATE) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET4_BIND) <= 0) abort();
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET6_BIND) <= 0) abort();
++        if (queryProgram(cg_fd, BPF_CGROUP_INET_EGRESS) <= 0)
++            ALOGW("BPF_CGROUP_INET_EGRESS query failed, continuing anyway");
++        if (queryProgram(cg_fd, BPF_CGROUP_INET_INGRESS) <= 0)
++            ALOGW("BPF_CGROUP_INET_INGRESS query failed, continuing anyway");
++        if (queryProgram(cg_fd, BPF_CGROUP_INET_SOCK_CREATE) <= 0)
++            ALOGW("BPF_CGROUP_INET_SOCK_CREATE query failed, continuing anyway");
++        if (queryProgram(cg_fd, BPF_CGROUP_INET4_BIND) <= 0)
++            ALOGW("BPF_CGROUP_INET4_BIND query failed, continuing anyway");
++        if (queryProgram(cg_fd, BPF_CGROUP_INET6_BIND) <= 0)
++            ALOGW("BPF_CGROUP_INET6_BIND query failed, continuing anyway");
+     }
+ 
+     if (isAtLeastKernelVersion(5, 10)) {
+-        if (queryProgram(cg_fd, BPF_CGROUP_INET_SOCK_RELEASE) <= 0) abort();
++        if (queryProgram(cg_fd, BPF_CGROUP_INET_SOCK_RELEASE) <= 0)
++            ALOGW("BPF_CGROUP_INET_SOCK_RELEASE query failed, continuing anyway");
+     }
+ 
+     if (isAtLeastV) {
+         // V requires 4.19+, so technically this 2nd 'if' is not required, but it
+         // doesn't hurt us to try to support AOSP forks that try to support older kernels.
+         if (isAtLeastKernelVersion(4, 19)) {
+-            if (queryProgram(cg_fd, BPF_CGROUP_INET4_CONNECT) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_INET6_CONNECT) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP4_RECVMSG) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP6_RECVMSG) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP4_SENDMSG) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_UDP6_SENDMSG) <= 0) abort();
++            if (queryProgram(cg_fd, BPF_CGROUP_INET4_CONNECT) <= 0)
++                ALOGW("BPF_CGROUP_INET4_CONNECT query failed, continuing anyway");
++            if (queryProgram(cg_fd, BPF_CGROUP_INET6_CONNECT) <= 0)
++                ALOGW("BPF_CGROUP_INET6_CONNECT query failed, continuing anyway");
++            if (queryProgram(cg_fd, BPF_CGROUP_UDP4_RECVMSG) <= 0)
++                ALOGW("BPF_CGROUP_UDP4_RECVMSG query failed, continuing anyway");
++            if (queryProgram(cg_fd, BPF_CGROUP_UDP6_RECVMSG) <= 0)
++                ALOGW("BPF_CGROUP_UDP6_RECVMSG query failed, continuing anyway");
++            if (queryProgram(cg_fd, BPF_CGROUP_UDP4_SENDMSG) <= 0)
++                ALOGW("BPF_CGROUP_UDP4_SENDMSG query failed, continuing anyway");
++            if (queryProgram(cg_fd, BPF_CGROUP_UDP6_SENDMSG) <= 0)
++                ALOGW("BPF_CGROUP_UDP6_SENDMSG query failed, continuing anyway");
+         }
+ 
+         if (isAtLeastKernelVersion(5, 4)) {
+-            if (queryProgram(cg_fd, BPF_CGROUP_GETSOCKOPT) <= 0) abort();
+-            if (queryProgram(cg_fd, BPF_CGROUP_SETSOCKOPT) <= 0) abort();
++            if (queryProgram(cg_fd, BPF_CGROUP_GETSOCKOPT) <= 0)
++                ALOGW("BPF_CGROUP_GETSOCKOPT query failed, continuing anyway");
++            if (queryProgram(cg_fd, BPF_CGROUP_SETSOCKOPT) <= 0)
++                ALOGW("BPF_CGROUP_SETSOCKOPT query failed, continuing anyway");
+         }
+     }
+ 
+@@ -252,10 +263,11 @@ static inline void waitForNetProgsLoaded() {
+         ALOGW("Waited %ds for init.svc.mdnsd_netbpfload=stopped, still waiting...", delay);
+     }
+     if (!mainlineNetBpfLoadDone()) {
+-        ALOGE("FATAL: init.svc.mdnsd_netbpfload=stopped, yet !mainlineNetBpfLoadDone");
+-        // mdnsd_netbpfload is marked 'reboot_on_failure', init should start a reboot very soon now,
+-        // spamming logs with an abort is pointless
+-        for (;;);
++        ALOGE("init.svc.mdnsd_netbpfload=stopped, yet !mainlineNetBpfLoadDone");
++        // On GSI/Treble builds, BPF loading may fail on old kernels.
++        // Instead of hanging forever, continue with degraded functionality.
++        ALOGW("Continuing without mainline BPF programs loaded");
++        return;
+     }
+     return;
+ }
+@@ -279,7 +291,8 @@ static inline void waitForBpf() {
+         // so waitForProgsLoaded() implies mainlineNetBpfLoadDone().
+         if (!base::SetProperty("ctl.start", "mdnsd_netbpfload")) {
+             ALOGE("Failed to set property ctl.start=mdnsd_netbpfload, see dmesg for reason.");
+-            abort();
++            ALOGW("Continuing without mdnsd_netbpfload");
++            return;
+         }
+ 
+         ALOGI("Waiting for Networking BPF programs");
+@@ -453,9 +466,18 @@ static void mapLockTest(void) {
+     const char * const m1 = BPF_NETD_PATH "map_netd_lock_array_test_map";
+     const char * const m2 = BPF_NETD_PATH "map_netd_lock_hash_test_map";
+ 
+-    unique_fd fd0(bpf::mapRetrieveExclusiveRW(m1)); if (!fd0.ok()) abort();  // grabs exclusive lock
++    unique_fd fd0(bpf::mapRetrieveExclusiveRW(m1));
++    if (!fd0.ok()) {
++        // On GSI/Treble builds with old kernels, BPF maps may not exist
++        ALOGW("mapLockTest: failed to retrieve %s, skipping lock test", m1);
++        return;
++    }
+ 
+-    unique_fd fd1(bpf::mapRetrieveExclusiveRW(m2)); if (!fd1.ok()) abort();  // no conflict with fd0
++    unique_fd fd1(bpf::mapRetrieveExclusiveRW(m2));
++    if (!fd1.ok()) {
++        ALOGW("mapLockTest: failed to retrieve %s, skipping lock test", m2);
++        return;
++    }
+     unique_fd fd2(bpf::mapRetrieveExclusiveRW(m2)); if ( fd2.ok()) abort();  // busy due to fd1
+     unique_fd fd3(bpf::mapRetrieveRO(m2));          if (!fd3.ok()) abort();  // no lock taken
+     unique_fd fd4(bpf::mapRetrieveRW(m2));          if ( fd4.ok()) abort();  // busy due to fd1
+diff --git a/service/jni/com_android_server_connectivity_ClatCoordinator.cpp b/service/jni/com_android_server_connectivity_ClatCoordinator.cpp
+index 437e78f..6979fb6 100644
+--- a/service/jni/com_android_server_connectivity_ClatCoordinator.cpp
++++ b/service/jni/com_android_server_connectivity_ClatCoordinator.cpp
+@@ -84,18 +84,13 @@ static void verifyPerms(const char * const path,
+       case VERIFY_MAP_RW: fd = bpf::mapRetrieveLocklessRW(path); break;
+     }
+ 
+-    if (fd < 0) ALOGF("bpf_obj_get '%s' failed, errno=%d", path, errno);
++    if (fd < 0) ALOGE("bpf_obj_get '%s' failed, errno=%d", path, errno);
+ 
+     if (fd >= 0) close(fd);
+ }
+ 
+ #undef ALOGF
+ 
+-bool isGsiImage() {
+-    // this implementation matches 2 other places in the codebase (same function name too)
+-    return !access("/system/system_ext/etc/init/init.gsi.rc", F_OK);
+-}
+-
+ static const char* kClatdDir = "/apex/com.android.tethering/bin/for-system";
+ static const char* kClatdBin = "/apex/com.android.tethering/bin/for-system/clatd";
+ 
+@@ -140,12 +135,12 @@ static void verifyClatPerms() {
+     // HACK: Some old vendor kernels lack ~5.10 backport of 'bpffs selinux genfscon' support.
+     // This is *NOT* supported, but let's allow, at least for now, U+ GSI to boot on them.
+     // (without this hack pixel5 R vendor + U gsi breaks)
+-    if (isGsiImage() && !bpf::isAtLeastKernelVersion(5, 10, 0)) {
+-        ALOGE("GSI with *BAD* pre-5.10 kernel lacking bpffs selinux genfscon support.");
++    // This is *NOT* supported, but let's allow, at least for now, to make 16 QPR2 boot on them.
++    if (!bpf::isAtLeastKernelVersion(5, 10, 0)) {
++        ALOGW("Kernel < 5.10 detected, skipping CLAT perms for legacy kernel.");
+         return;
+     }
+ 
+-    if (fatal) abort();
+ }
+ 
+ #undef V
+diff --git a/service/src/com/android/server/BpfNetMaps.java b/service/src/com/android/server/BpfNetMaps.java
+index 2523450..484226b 100644
+--- a/service/src/com/android/server/BpfNetMaps.java
++++ b/service/src/com/android/server/BpfNetMaps.java
+@@ -1857,6 +1857,8 @@ public class BpfNetMaps {
+     public boolean getLocalNetAccess(final int lpmBitlen, @Nullable final String iface,
+             final InetAddress address, final int protocol, final int remotePort) {
+         throwIfPre25Q2("getLocalNetAccess is not available on pre-B devices");
++        if (sLocalNetAccessMap == null) return true;
++
+         final int ifIndex;
+         if (iface == null) {
+             ifIndex = 0;
+@@ -1921,6 +1923,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.CUR_DEVELOPMENT)
+     public void addUidToLocalNetBlockMap(final int uid) {
+         throwIfPre25Q2("addUidToLocalNetBlockMap is not available on pre-B devices");
++        if (sLocalNetBlockedUidMap == null) {
++            Log.w(TAG, "sLocalNetBlockedUidMap is null, skipping add for uid: " + uid);
++            return;
++        }
+         try {
+             sLocalNetBlockedUidMap.updateEntry(new U32(uid), new Bool(true));
+         } catch (ErrnoException e) {
+@@ -1935,6 +1941,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.CUR_DEVELOPMENT)
+     public boolean isUidBlockedFromUsingLocalNetwork(final int uid) {
+         throwIfPre25Q2("isUidBlockedFromUsingLocalNetwork is not available on pre-B devices");
++        if (sLocalNetBlockedUidMap == null) {
++            Log.w(TAG, "sLocalNetBlockedUidMap is null, assuming not blocked for uid: " + uid);
++            return false;
++        }
+         try {
+             final Bool value = sLocalNetBlockedUidMap.getValue(new U32(uid));
+             return value == null ? false : value.val;
+@@ -1952,6 +1962,10 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.CUR_DEVELOPMENT)
+     public void removeUidFromLocalNetBlockMap(final int uid) {
+         throwIfPre25Q2("removeUidFromLocalNetBlockMap is not available on pre-B devices");
++        if (sLocalNetBlockedUidMap == null) {
++            Log.w(TAG, "sLocalNetBlockedUidMap is null, skipping delete for uid: " + uid);
++            return;
++        }
+         try {
+             sLocalNetBlockedUidMap.deleteEntry(new U32(uid));
+         } catch (ErrnoException e) {
+@@ -1965,6 +1979,7 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+     public void addLocalNetUidAccess(final int uid, @NonNull final String iface) {
+         throwIfPre25Q2("addLocalNetUidAccess is not available on pre-B devices");
++        if (sLocalNetUidHostAllowlistMap == null) return;
+         int ifIndex = mInterfaceTracker.getInterfaceIndex(iface);
+         if (ifIndex == 0) {
+             Log.e(TAG, "Failed to get if index, skip addLocalNetUidAccess for uid: " + uid
+@@ -1986,6 +2001,7 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+     public void removeLocalNetUidAccess(final int uid, @NonNull final String iface) {
+         throwIfPre25Q2("removeLocalNetUidAccess is not available on pre-B devices");
++        if (sLocalNetUidHostAllowlistMap == null) return;
+         final int ifIndex = mInterfaceTracker.getInterfaceIndex(iface);
+         if (ifIndex == 0) {
+             Log.e(TAG, "Failed to get if index, skip removeLocalNetUidAccess for uid: " + uid
+@@ -2013,6 +2029,7 @@ public class BpfNetMaps {
+     public void addLocalNetUidHostAccess(final int uid, final int ifIndex,
+             @NonNull final InetAddress address) {
+         throwIfPre25Q2("addLocalNetUidHostAccess is not available on pre-B devices");
++        if (sLocalNetUidHostAllowlistMap == null) return;
+         final LocalNetUidHostAllowlistKey key = new LocalNetUidHostAllowlistKey(
+                 uid, ifIndex, address);
+         synchronized (sLocalNetAccessLock) {
+@@ -2028,6 +2045,7 @@ public class BpfNetMaps {
+     @RequiresApi(Build.VERSION_CODES.BAKLAVA)
+     public void removeLocalNetHostAllowlistForInterface(final int ifIndex) {
+         throwIfPre25Q2("removeLocalNetHostAllowlistForInterface is not available on pre-B devices");
++        if (sLocalNetUidHostAllowlistMap == null) return;
+         synchronized (sLocalNetAccessLock) {
+             incrementLnpGenerationId(true);
+             try {
+@@ -2359,6 +2377,7 @@ public class BpfNetMaps {
+ 
+     @GuardedBy("sLocalNetAccessLock")
+     private void incrementLnpGenerationId(boolean expectEven) throws IllegalStateException {
++        if (sLocalNetCacheGenerationIdMap == null) return;
+         if (expectEven != ((sLnpGenerationID & 1) == 0)) {
+             throw new IllegalStateException(
+                     "Parity error in the local net cache generation ID. This should never happen.");
+-- 
+2.43.0
+

@@ -1,0 +1,5 @@
+0003-add-infinity-x-and-products.patch (personal/platform_device_phh_treble) is held back:
+it replaces device/phh/treble/AndroidProducts.mk with 32 *_gsi.mk products that do not
+exist in this tree, and adds an infinity.mk with INFINITY_MAINTAINER := Doze-off /
+OFFICIAL and an infinity_gsi.mk that uses `include aosp_arm64.mk`. Our own gsi/infinity*.mk
+(installed by setup_gsi.sh) are used instead.

@@ -1,0 +1,87 @@
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+    default_team: "trendy_team_trusty",
+}
+
+rust_defaults {
+    name: "memshare_trusty_vm_launcher_defaults",
+    edition: "2021",
+    prefer_rlib: true,
+    rustlibs: [
+        "android.trusty.membuf-rust",
+        "libanyhow",
+        "libavf_bindgen",
+        "libbinder_rs",
+        "libclap",
+        "libenv_logger",
+        "libhypervisor_props",
+        "liblog_rust",
+        "libscopeguard",
+        "libserde",
+        "libserde_json",
+        "libthiserror",
+        "libmemshare_launcher",
+    ],
+    shared_libs: ["libavf"],
+    // the virtualization stack is not built on the gsi
+    enabled: false,
+    apex_available: [
+        "//apex_available:platform",
+    ],
+}
+
+rust_library {
+    name: "libmemshare_launcher",
+    crate_name: "memshare_launcher",
+    srcs: ["src/lib.rs"],
+    edition: "2021",
+    rustlibs: [
+        "android.trusty.membuf-rust",
+        "libbinder_rs",
+        "liblog_rust",
+        "libthiserror",
+    ],
+    apex_available: [
+        "//apex_available:platform",
+    ],
+    vendor_available: true,
+    host_supported: true,
+}
+
+rust_test_host {
+    name: "libmemshare_launcher_test",
+    crate_name: "memshare_launcher_test",
+    srcs: ["src/allocator.rs"],
+    test_suites: ["general-tests"],
+    edition: "2021",
+}
+
+rust_binary {
+    name: "memshare_trusty_vm_launcher_system",
+    crate_name: "memshare_trusty_vm_launcher_system",
+    defaults: [
+        "memshare_trusty_vm_launcher_defaults",
+    ],
+    srcs: ["src/main_system.rs"],
+    rustlibs: [
+        "android.system.virtualizationservice-rust",
+        "libvmclient",
+        "libnix",
+    ],
+    system_ext_specific: true,
+}
+
+rust_binary {
+    name: "memshare_trusty_vm_launcher_vendor",
+    crate_name: "memshare_trusty_vm_launcher_vendor",
+    defaults: [
+        "memshare_trusty_vm_launcher_defaults",
+    ],
+    rustlibs: [
+        "librustutils",
+        "liblibc",
+        "libnix",
+    ],
+    srcs: ["src/main_vendor.rs"],
+    vendor: true,
+}

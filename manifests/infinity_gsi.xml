@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Local manifest for ProjectInfinity-X GSI builds.
+     After repo sync, run: bash gsi/setup_gsi.sh -->
+<manifest>
+
+  <!-- Use distinct names: "github" and "lfs" are already taken by the main manifest -->
+  <remote name="gh" fetch="https://github.com/" />
+  <remote name="gl" fetch="https://gitlab.com/" />
+
+  <!-- TrebleDroid core (android-16.0: no android-17.0 branch exists yet, 2026-11-11) -->
+  <project path="device/phh/treble"       name="TrebleDroid/device_phh_treble"            remote="gh" revision="android-16.0" />
+  <project path="treble_app"              name="TrebleDroid/treble_app"                    remote="gh" revision="master" />
+  <project path="vendor/interfaces"       name="TrebleDroid/vendor_interfaces"             remote="gh" revision="android-16.0" />
+
+  <!-- Hardware overlays -->
+  <project path="vendor/hardware_overlay" name="MisterZtr/vendor_hardware_overlay"         remote="gh" revision="main" />
+
+  <!-- Extra tools -->
+  <project path="vendor/lptools"          name="phhusson/vendor_lptools"                   remote="gh" revision="master" />
+
+  <!-- QCOM in-call audio fix for GSI -->
+  <project path="packages/apps/QcRilAm"  name="AndyCGYan/android_packages_apps_QcRilAm"  remote="gh" revision="master" />
+
+  <!-- VNDK backward-compatibility snapshots -->
+  <project path="prebuilts/vndk/v28"     name="naz664/prebuilts_vndk_v28"                 remote="gh"   revision="master" clone-depth="1" />
+  <project path="prebuilts/vndk/v29"     name="platform/prebuilts/vndk/v29"               remote="aosp" revision="master" clone-depth="1" />
+
+  <!-- Patches: trebledroid + personal sets (MisterZtr LineageOS GSI fork) -->
+  <project path="LineageOS_gsi"          name="MisterZtr/LineageOS_gsi"                   remote="gh" revision="lineage-23.2" />
+
+  <!-- MindTheGapps for Android 17 (cinnamonbun), used by the gapps build variant -->
+  <project path="vendor/gapps"           name="MindTheGapps/vendor_gapps"                 remote="gl" revision="cinnamonbun" clone-depth="1" />
+
+</manifest>

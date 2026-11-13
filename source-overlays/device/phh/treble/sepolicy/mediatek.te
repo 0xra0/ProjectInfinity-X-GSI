@@ -1,0 +1,63 @@
+type hal_graphics_allocator_default, domain;
+type proc_ged, file_type;
+allowxperm domain proc_ged:file ioctl { 0x6700-0x67ff };
+
+allow init mnt_product_file:dir mounton;
+
+type mtk_hal_audio, domain;
+typeattribute mtk_hal_audio hal_broadcastradio_client;
+allow mtk_hal_audio audioserver:fifo_file write;
+allow mtk_hal_audio untrusted_app:fifo_file write;
+allow hal_audio_sysbta untrusted_app:fifo_file write;
+
+type mtk_hal_light, domain;
+typeattribute mtk_hal_light hal_light_server;
+
+type mtk_hal_power, domain;
+allow mtk_hal_power system_data_root_file:file create_file_perms;
+allow zygote ashmem_device:chr_file execute;
+
+attribute hal_mms_server;
+binder_call({appdomain -isolated_app}, hal_mms_server)
+binder_call(hal_mms_server, {appdomain -isolated_app})
+
+type mtk_hal_mms_hwservice, hwservice_manager_type;
+allow { appdomain -isolated_app }  mtk_hal_mms_hwservice:hwservice_manager find;
+
+#denied { read } for comm="tkuinit" name="u:object_r:default_prop:s0" dev="tmpfs" ino=2029 scontext=u:r:tkcore:s0 tcontext=u:object_r:default_prop:s0 tclass=file permissive=1
+#denied { open } for comm="tkuinit" path="/dev/__properties__/u:object_r:default_prop:s0" dev="tmpfs" ino=2029 scontext=u:r:tkcore:s0 tcontext=u:object_r:default_prop:s0 tclass=file permissive=1
+#denied { getattr } for comm="tkuinit" path="/dev/__properties__/u:object_r:default_prop:s0" dev="tmpfs" ino=2029 scontext=u:r:tkcore:s0 tcontext=u:object_r:default_prop:s0 tclass=file permissive=1
+
+type tkcore, domain;
+permissive tkcore;
+
+allow platform_app sysfs_leds:dir r_dir_perms;
+allow platform_app sysfs_leds:file r_file_perms;
+
+
+# Needed for headphone detection when opening /bus/platform/drivers/pmic-codec-accdet/state
+allow mtk_hal_audio sysfs:file r_file_perms;
+
+# MTK fuel-gauge NVRAM loader (fuelgauged_nvram) traverses the DT firmware
+# sysfs tree to load gauge calibration. the GSI system policy lacks the allow,
+# so SELinux denies the search and the gauge reports a hardcoded 48% until
+# coulomb counters resync (#69). sysfs_dt_firmware_android is system-public
+# (system/sepolicy/public/file.te); fuelgauged_nvram is an MTK vendor domain
+# re-declared here so the allow is visible to system_ext -- secilc -m unifies
+# it with the vendor's own declaration at boot, so the vendor's existing rules
+# for the domain are preserved. on non-MTK vendors the type is unused (no
+# process is assigned to it) so this is a harmless no-op.
+type fuelgauged_nvram, domain;
+allow fuelgauged_nvram sysfs_dt_firmware_android:dir r_dir_perms;
+allow fuelgauged_nvram sysfs_dt_firmware_android:file r_file_perms;
+allow fuelgauged_nvram sysfs_dt_firmware_android:lnk_file r_file_perms;
+
+# unihertz: the camera hal hides the aux cameras until cameraserver calls setNotGsi on agolddaemon
+type hal_aidl_agolddaemon_service, service_manager_type;
+allow cameraserver hal_aidl_agolddaemon_service:service_manager find;
+binder_call(cameraserver, hal_aidl_agolddaemon_default);
+
+# silead fingerprint hal (transsion): openHal fails when it can't create its config dir (#230)
+type silead_fpd_data_file, file_type, data_file_type;
+allow hal_fingerprint_default silead_fpd_data_file:dir create_dir_perms;
+allow hal_fingerprint_default silead_fpd_data_file:file create_file_perms;
