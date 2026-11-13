@@ -1,0 +1,67 @@
+{
+  "release": "v4.2-android17-20261113",
+  "rom": "ProjectInfinity-X",
+  "version": "4.2",
+  "android_version": "17",
+  "publication_date": "2026-11-13",
+  "status": "experimental; build-verified, physical-device testing unconfirmed",
+  "compression": "XZ preset 1, CRC64",
+  "variants": {
+    "vanilla": {
+      "image": "ProjectInfinity-X-4.2-Android17-20261113-arm64-ab-vanilla.img",
+      "image_bytes": 2974470144,
+      "image_sha256": "32e13af394adf026bc543424d9a4c2a0d9053f7ebdd41e2e37fa5d207d677d45",
+      "properties": {
+        "ro.build.id": "CP2A.260605.016",
+        "ro.build.version.sdk": "37",
+        "ro.build.version.release": "17",
+        "ro.build.version.security_patch": "2026-11-01",
+        "ro.build.date.utc": "1794506319",
+        "ro.build.type": "user",
+        "ro.infinity.device": "tdgsi_arm64_ab",
+        "ro.adb.secure": "1",
+        "ro.debuggable": "0",
+        "ro.infinity.android.version": "17",
+        "ro.infinity.build.version": "Project_Infinity-X-4.2-tdgsi_arm64-12.11.2026",
+        "ro.infinity.build.status": "UNOFFICIAL",
+        "ro.infinity.build.date": "12.11.2026",
+        "ro.infinity.buildtype": "UNOFFICIAL",
+        "ro.infinity.fingerprint": "Project_Infinity//tdgsi_arm64/12.11.2026",
+        "ro.infinity.version": "4.2",
+        "ro.infinity.maintainer": "UNKNOWN"
+      },
+      "archive": "ProjectInfinity-X-4.2-Android17-20261113-arm64-ab-vanilla.img.xz",
+      "archive_bytes": 1267906048,
+      "archive_sha256": "289f5932961c9235c4b44989fb2d4352ee8e7d43b0f93dad17ffc38766fe72e3",
+      "verification": "XZ integrity and decompressed SHA-256 match the unchanged original image"
+    },
+    "gapps": {
+      "image": "ProjectInfinity-X-4.2-Android17-20261113-arm64-ab-gapps.img",
+      "image_bytes": 3679248384,
+      "image_sha256": "ecdcf848a927588f28f91d9192992fd4b69bd8c3b5c222180c6ce35665be2ac8",
+      "properties": {
+        "ro.build.id": "CP2A.260605.016",
+        "ro.build.version.sdk": "37",
+        "ro.build.version.release": "17",
+        "ro.build.version.security_patch": "2026-11-01",
+        "ro.build.date.utc": "1794566949",
+        "ro.build.type": "user",
+        "ro.infinity.device": "tdgsi_arm64_ab",
+        "ro.adb.secure": "1",
+        "ro.debuggable": "0",
+        "ro.infinity.android.version": "17",
+        "ro.infinity.build.version": "Project_Infinity-X-4.2-tdgsi_arm64_gapps-13.11.2026",
+        "ro.infinity.build.status": "UNOFFICIAL",
+        "ro.infinity.build.date": "13.11.2026",
+        "ro.infinity.buildtype": "UNOFFICIAL",
+        "ro.infinity.fingerprint": "Project_Infinity//tdgsi_arm64_gapps/13.11.2026",
+        "ro.infinity.version": "4.2",
+        "ro.infinity.maintainer": "UNKNOWN"
+      },
+      "archive": "ProjectInfinity-X-4.2-Android17-20261113-arm64-ab-gapps.img.xz",
+      "archive_bytes": 1574416308,
+      "archive_sha256": "86db71d4cd7fab0a4db7834065d02182ddbbbf9046976a71610587af49fc23bc",
+      "verification": "XZ integrity and decompressed SHA-256 match the unchanged original image"
+    }
+  }
+}
